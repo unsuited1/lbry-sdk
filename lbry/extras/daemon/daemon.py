@@ -304,9 +304,9 @@ class UnknownAPIMethodError(Exception):
 
 def jsonrpc_dumps_pretty(obj, **kwargs):
     if isinstance(obj, JSONRPCError):
-        data = {"jsonrpc": "2.0", "error": obj.to_dict()}
+        data = {"jsonrpc": "2.0", "error": obj.to_dict(), "id": rpc_request_id}
     else:
-        data = {"jsonrpc": "2.0", "result": obj}
+        data = {"jsonrpc": "2.0", "result": obj, "id": rpc_request_id}
     return json.dumps(data, cls=JSONResponseEncoder, sort_keys=True, indent=2, **kwargs) + "\n"
 
 
@@ -603,6 +603,8 @@ class Daemon(metaclass=JSONRPCServerType):
     async def handle_old_jsonrpc(self, request):
         ensure_request_allowed(request, self.conf)
         data = await request.json()
+        # jsonrpc 2.0 requires a field "id" on each response that is identical with the id in the request
+        rpc_request_id = data.id
         params = data.get('params', {})
         include_protobuf = params.pop('include_protobuf', False) if isinstance(params, dict) else False
         result = await self._process_rpc_call(data)
@@ -612,14 +614,14 @@ class Daemon(metaclass=JSONRPCServerType):
             ledger = self.ledger
         try:
             encoded_result = jsonrpc_dumps_pretty(
-                result, ledger=ledger, include_protobuf=include_protobuf)
+                result, ledger=ledger, include_protobuf=include_protobuf, rpc_request_id=rpc_request_id)
         except Exception:
             log.exception('Failed to encode JSON RPC result:')
             encoded_result = jsonrpc_dumps_pretty(JSONRPCError(
                 JSONRPCError.CODE_APPLICATION_ERROR,
                 'After successfully executing the command, failed to encode result for JSON RPC response.',
                 {'traceback': format_exc()}
-            ), ledger=ledger)
+            ), ledger=ledger, rpc_request_id=rpc_request_id)
         headers = {}
         if self.conf.allowed_origin:
             headers.update({
